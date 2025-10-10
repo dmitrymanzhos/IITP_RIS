@@ -5,15 +5,15 @@ import re
 import matplotlib
 
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.stats import gmean
+
+from models.base_predictor import BasePredictor
 from models.linear_model import LinearPredictor
 from models.random_forest_model import RandomForestPredictor
 from models.gradient_boosting_model import GradientBoostingPredictor
+from models.random_forest_combined_model import RandomForestCombinedPredictor
 
 
-def load_data(file_paths):  # Упрощенная загрузка данных без стратификации
+def load_data(file_paths):  # загрузка датасета из предобработанных файлов
     all_data = []
     pattern = r'f=([\d.]+)GHz\s*er1=([\d.]+)\s*H=([\d.]+)\s*w=([\d.]+)\s*A=([\d.]+)\s*L=([\d.]+)'
 
@@ -40,8 +40,6 @@ def load_data(file_paths):  # Упрощенная загрузка данных
                     all_data.append((coeffs, [ff, h, er1, w, a, l]))
                 except Exception as e:
                     print(f"Ошибка обработки строки в файле {file_path}: {e}")
-
-    # Преобразование в массивы
     features = []
     targets = []
     metadata = []
@@ -74,28 +72,15 @@ def main():
     models = {
         'Linear': LinearPredictor(verbose=True, show_plots=False),
         'RandomForest': RandomForestPredictor(verbose=True, show_plots=False),
-        'GradientBoosting': GradientBoostingPredictor(verbose=True, show_plots=False)
+        'GradientBoosting': GradientBoostingPredictor(verbose=True, show_plots=False),
+        'RandomForestCombined': RandomForestCombinedPredictor(verbose=True, show_plots=False)
     }
 
     results = {}
     for name, model in models.items():
         model.load_data(data)
         model.train()
-        results[name] = {
-            'mean_mse': model.mean_mse,
-            'mean_mae': model.mean_mae,
-            'mean_me': model.mean_me,
-            'max_mse': model.max_mse,
-            'max_mae': model.max_mae,
-            'max_me': model.max_me,
-            'mean_freq_error': model.mean_freq_error,
-            'max_freq_error': model.max_freq_error,
-            'mean_slope_error': model.mean_slope_error,
-            'max_slope_error': model.max_slope_error
-        }
-
-    with open("model_metrics.json", "w") as f:
-        json.dump(results, f, indent=2)
+        results[name] = model.get_metrics()
 
 
 if __name__ == "__main__":
