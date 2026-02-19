@@ -44,7 +44,7 @@ class BasePredictor:  # родительский класс для всех мо
         if b <= 0:
             b = 0.01
         if f0 is not None:
-            c = np.clip(c, f0 - 0.05 * f0, f0 + 0.05 * f0)
+            c = np.clip(c, f0 - 0.1 * f0, f0 + 0.1 * f0)
         return [a, b, c, d]
 
     def _compute_frequency_error(self, true_coeffs, pred_coeffs, f0):  # вычисление FE
@@ -69,6 +69,25 @@ class BasePredictor:  # родительский класс для всех мо
             return abs(slope_pred)
         else:
             return abs(slope_true - slope_pred) / abs(slope_true)
+
+    def _compute_metrics(self, X, y_true, y_pred, metadata):  # возвращает все метрики в 1 словаре
+        mse_v, mae_v, me_v, fe_v, se_v = [], [], [], [], []
+        for i in range(len(y_true)):
+            f0 = metadata[i][0]
+            x_grid = np.linspace(f0 - 0.1 * f0, f0 + 0.1 * f0, 1000)
+            tc = self.arctg_func(y_true[i], x_grid)
+            pc = self.arctg_func(self.apply_constraints(y_pred[i], f0), x_grid)
+            from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error
+            mse_v.append(mean_squared_error(tc, pc))
+            mae_v.append(mean_absolute_error(tc, pc))
+            me_v.append(max_error(tc, pc))
+            fe_v.append(self._compute_frequency_error(y_true[i], y_pred[i], f0))
+            se_v.append(self._compute_slope_error(y_true[i], y_pred[i]))
+        return {
+            'mean_mse': np.mean(mse_v), 'mean_mae': np.mean(mae_v),
+            'mean_me': np.mean(me_v), 'mean_freq_error': np.mean(fe_v),
+            'mean_slope_error': np.mean(se_v)
+        }
 
     def _evaluate_curves(self, X_eval, y_eval, y_pred, metadata_eval):  # вычисление метрик
         mse_values = []
@@ -158,16 +177,12 @@ class BasePredictor:  # родительский класс для всех мо
                   f"Разница: {difference:8.4f} | Коэффициент: {overfitting_ratio:5.2f}x")
 
     def _analyze_tree_depth(self):
-        if hasattr(self.model, 'estimators_'):
-            depths = []
-            for estimator in self.model.estimators_:
-                if hasattr(estimator, 'tree_'):
-                    depths.append(estimator.tree_.max_depth)
-                elif hasattr(estimator, 'get_depth'):
-                    depths.append(estimator.get_depth())
-
-            if depths:
-                print(f"\nГЛУБИНА ДЕРЕВЬЕВ:")
-                print(f"  Средняя: {np.mean(depths):.1f}")
-                print(f"  Максимальная: {np.max(depths)}")
-                print(f"  Минимальная: {np.min(depths)}")
+        if not hasattr(self.model, 'estimators_'):
+            return
+        depths = []
+        for output_estimator in self.model.estimators_:  # по числу выходов
+            if hasattr(output_estimator, 'estimators_'):  # RF внутри MultiOutput
+                for tree in output_estimator.estimators_:
+                    depths.append(tree.tree_.max_depth)
+        if depths:
+            print(f"  Средняя: {np.mean(depths):.1f}, Макс: {np.max(depths)}, Мин: {np.min(depths)}")

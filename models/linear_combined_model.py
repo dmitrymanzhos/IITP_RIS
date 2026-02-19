@@ -1,22 +1,24 @@
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
+import math
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split, cross_val_predict
 from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
-import math
 from base_predictor import BasePredictor
 
 
-class RandomForestCombinedPredictor(BasePredictor):
+class LinearCombinedPredictor(BasePredictor):
     """
-    Двухстадийная Combined модель с ИСПРАВЛЕННОЙ архитектурой.
+    Двухстадийная Combined модель с линейными регрессорами.
 
-    КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ:
-    1. Устранена утечка данных в _prepare_coeff_data (теперь принимает y_data)
-    2. Используется cross_val_predict для честной передачи slope во вторую модель
-    3. Обе модели обучаются на полном X_temp (не разбиваются 50/50)
-    4. Нативный RandomForestRegressor вместо MultiOutputRegressor
-    5. Нормализованный скорер для первой модели
-    6. FE/SE скорер для второй модели
+    АРХИТЕКТУРА:
+    Стадия 1 (slope_predictor): Linear Ridge → (f0, slope)
+    Стадия 2 (coeff_predictor): Linear Ridge → (a, d)
+
+    Полностью аналогична RandomForestCombinedPredictor, но использует
+    линейную регрессию вместо случайного леса. Быстрее, проще,
+    но может быть менее точной на нелинейных зависимостях.
     """
 
     def __init__(self, verbose=True, show_plots=False, random_state=42):
@@ -33,10 +35,7 @@ class RandomForestCombinedPredictor(BasePredictor):
         return np.array(y_slope)
 
     def _prepare_coeff_data(self, x_data, slope_predictions, y_data):
-        """
-        ИСПРАВЛЕНО: теперь принимает y_data как аргумент.
-        Подготовка данных для второй модели (X + slope -> a, d)
-        """
+        """Подготовка данных для второй модели (X + slope → a, d)"""
         x_coeff = np.hstack([x_data, slope_predictions])
         y_coeff = y_data[:, [0, 3]]  # a и d
         return x_coeff, y_coeff
@@ -53,38 +52,30 @@ class RandomForestCombinedPredictor(BasePredictor):
     def _compute_b_from_slope(self, a_pred, slope_pred):
         """Восстановление b из a и slope"""
         if abs(a_pred) < 1e-10:
-            return 0.01  # Минимальное значение
+            return 0.01
         slope_rad = slope_pred * (math.pi / 180)
         return math.tan(slope_rad) / abs(a_pred)
 
     def _create_slope_scorer(self):
-        """
-        ИСПРАВЛЕНО: нормализованный скорер для (f0, slope).
-        Учитывает разные масштабы: f0 в GHz (1-60), slope в градусах (0-90).
-        """
+        """Нормализованный скорер для (f0, slope)"""
 
         def normalized_scorer(estimator, X, y):
             y_pred = estimator.predict(X)
 
-            # MAE для f0, нормированная по среднему значению f0 в батче
             mae_f0 = np.mean(np.abs(y[:, 0] - y_pred[:, 0]))
             f0_mean = np.mean(y[:, 0])
             mae_f0_normalized = mae_f0 / f0_mean if f0_mean > 0 else mae_f0
 
-            # MAE для slope, нормированная по диапазону (0-90 градусов)
             mae_slope = np.mean(np.abs(y[:, 1] - y_pred[:, 1]))
             mae_slope_normalized = mae_slope / 90.0
 
-            # Больший вес на slope, т.к. он критичен для SE
             w_slope = 5.0
             return -(mae_f0_normalized + w_slope * mae_slope_normalized)
 
         return make_scorer(normalized_scorer, greater_is_better=False)
 
     def _create_coeff_scorer(self):
-        """
-        ИСПРАВЛЕНО: скорер напрямую оптимизирует FE и SE.
-        """
+        """Скорер напрямую оптимизирует FE и SE"""
 
         def fe_se_scorer(estimator, X, y):
             y_pred = estimator.predict(X)
@@ -92,19 +83,16 @@ class RandomForestCombinedPredictor(BasePredictor):
             se_errors = []
 
             for i in range(len(y)):
-                f0 = X[i, 4]  # f0 из исходных признаков
-                f0_pred = X[i, 7]  # f0 из slope predictor
-                slope_pred = X[i, 8]  # slope из slope predictor
+                f0 = X[i, 4]
+                f0_pred = X[i, 7]
+                slope_pred = X[i, 8]
 
                 a_true, d_true = y[i]
                 a_pred, d_pred = y_pred[i]
 
-                # Вычисляем b для истинных значений
                 b_true = self._compute_b_from_slope(a_true, slope_pred)
-                # Вычисляем b для предсказаний
                 b_pred = self._compute_b_from_slope(a_pred, slope_pred)
 
-                # Вычисляем метрики
                 fe = self._compute_frequency_error(
                     [a_true, b_true, f0_pred, d_true],
                     [a_pred, b_pred, f0_pred, d_pred],
@@ -118,15 +106,24 @@ class RandomForestCombinedPredictor(BasePredictor):
                 fe_errors.append(fe)
                 se_errors.append(se)
 
-            # Минимизируем сумму FE + SE*100
             return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
 
         return make_scorer(fe_se_scorer, greater_is_better=False)
 
-    def train(self, test_size=0.2, n_iter=50, cv_splits=5):
+    def train(self, test_size=0.2, n_iter_slope=30, n_iter_coeff=30, cv_splits=5):
         """
-        КРИТИЧЕСКИ ИСПРАВЛЕНО: обе модели обучаются на полном X_temp,
-        используется cross_val_predict для честной передачи slope.
+        Обучение двухстадийной модели.
+
+        Параметры:
+        ----------
+        test_size : float
+            Размер тестовой выборки
+        n_iter_slope : int
+            Число итераций RandomizedSearch для slope predictor
+        n_iter_coeff : int
+            Число итераций RandomizedSearch для coeff predictor
+        cv_splits : int
+            Число фолдов для кросс-валидации
         """
         # Первый сплит: отделяем тестовую выборку
         X_temp, X_test, y_temp, y_test, metadata_temp, metadata_test = train_test_split(
@@ -135,16 +132,14 @@ class RandomForestCombinedPredictor(BasePredictor):
 
         if self.verbose:
             print(f"\n{'=' * 80}")
-            print(f"COMBINED MODEL: обучение на {len(X_temp)} samples, тест на {len(X_test)} samples")
+            print(f"LINEAR COMBINED MODEL: обучение на {len(X_temp)} samples, тест на {len(X_test)} samples")
             print(f"{'=' * 80}\n")
 
         # ===== СТАДИЯ 1: Обучение slope predictor на ПОЛНОМ X_temp =====
         y_slope_full = self._prepare_slope_data(y_temp)
-        self.slope_predictor = self._train_slope_predictor(X_temp, y_slope_full, n_iter, cv_splits)
+        self.slope_predictor = self._train_slope_predictor(X_temp, y_slope_full, n_iter_slope, cv_splits)
 
         # ===== Получение out-of-fold предсказаний для X_temp =====
-        # Это гарантирует отсутствие утечки: каждый семпл предсказывается моделью,
-        # которая не видела его во время обучения
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
         slope_oof = cross_val_predict(
             self.slope_predictor, X_temp, y_slope_full,
@@ -152,14 +147,13 @@ class RandomForestCombinedPredictor(BasePredictor):
         )
 
         if self.verbose:
-            # Оценка качества slope predictor на OOF
             mae_f0 = np.mean(np.abs(y_slope_full[:, 0] - slope_oof[:, 0]))
             mae_slope = np.mean(np.abs(y_slope_full[:, 1] - slope_oof[:, 1]))
             print(f"Slope Predictor OOF MAE: f0={mae_f0:.4f} GHz, slope={mae_slope:.4f}°")
 
         # ===== СТАДИЯ 2: Обучение coeff predictor на ПОЛНОМ X_temp + OOF slope =====
         x_coeff_train, y_coeff_train = self._prepare_coeff_data(X_temp, slope_oof, y_temp)
-        self.coeff_predictor = self._train_coeff_predictor(x_coeff_train, y_coeff_train, n_iter, cv_splits)
+        self.coeff_predictor = self._train_coeff_predictor(x_coeff_train, y_coeff_train, n_iter_coeff, cv_splits)
 
         # ===== Финальная оценка на тестовой выборке =====
         self._evaluate_combined_model(X_test, y_test, metadata_test)
@@ -168,7 +162,6 @@ class RandomForestCombinedPredictor(BasePredictor):
             print("\n" + "=" * 80)
             print("ОЦЕНКА ПЕРЕОБУЧЕНИЯ")
             print("=" * 80)
-            # Для slope predictor
             print("\nSLOPE PREDICTOR:")
             slope_train_pred = self.slope_predictor.predict(X_temp)
             self._print_slope_metrics(y_slope_full, slope_train_pred, "Train")
@@ -184,16 +177,14 @@ class RandomForestCombinedPredictor(BasePredictor):
 
     def _train_slope_predictor(self, x_train, y_slope_train, n_iter, cv_splits):
         """Обучение первой модели: X -> (f0, slope)"""
-        model = RandomForestRegressor(random_state=self.random_state)
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('ridge', Ridge())
+        ])
 
         param_grid = {
-            'n_estimators': [100, 200, 300, 400],
-            'max_depth': [3, 4, 5, 6, None],
-            'min_samples_split': [2, 5, 10, 15],
-            'min_samples_leaf': [1, 2, 3, 4],
-            'max_features': ['sqrt', 'log2'],
-            'bootstrap': [True, False],
-            'max_samples': [0.7, 0.8, 0.9, None],
+            'ridge__alpha': [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+            'ridge__fit_intercept': [True, False],
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
@@ -206,7 +197,7 @@ class RandomForestCombinedPredictor(BasePredictor):
         search.fit(x_train, y_slope_train)
 
         if self.verbose:
-            print(f"\nSLOPE MODEL:")
+            print(f"\nSLOPE MODEL (Linear):")
             print(f"  Лучшие параметры: {search.best_params_}")
             print(f"  Лучший score: {search.best_score_:.4f}")
 
@@ -214,16 +205,14 @@ class RandomForestCombinedPredictor(BasePredictor):
 
     def _train_coeff_predictor(self, x_coeff_train, y_coeff_train, n_iter, cv_splits):
         """Обучение второй модели: (X + slope) -> (a, d)"""
-        model = RandomForestRegressor(random_state=self.random_state)
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('ridge', Ridge())
+        ])
 
         param_grid = {
-            'n_estimators': [100, 200, 300, 400],
-            'max_depth': [3, 4, 5, 6, None],
-            'min_samples_split': [2, 5, 10, 15],
-            'min_samples_leaf': [1, 2, 3, 4],
-            'max_features': ['sqrt', 'log2'],
-            'bootstrap': [True, False],
-            'max_samples': [0.7, 0.8, 0.9, None],
+            'ridge__alpha': [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+            'ridge__fit_intercept': [True, False],
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
@@ -236,35 +225,27 @@ class RandomForestCombinedPredictor(BasePredictor):
         search.fit(x_coeff_train, y_coeff_train)
 
         if self.verbose:
-            print(f"\nCOEFF MODEL:")
+            print(f"\nCOEFF MODEL (Linear):")
             print(f"  Лучшие параметры: {search.best_params_}")
             print(f"  Лучший score: {search.best_score_:.4f}\n")
 
         return search.best_estimator_
 
     def _evaluate_combined_model(self, x_test, y_test, metadata_test):
-        """ИСПРАВЛЕНО: корректная оценка полной модели на тестовой выборке"""
-        # Предсказываем (f0, slope)
+        """Оценка полной модели на тестовой выборке"""
         slope_predictions = self.slope_predictor.predict(x_test)
-
-        # Расширяем X добавляя slope
         x_coeff_test = np.hstack([x_test, slope_predictions])
-
-        # Предсказываем (a, d)
         coeff_predictions = self.coeff_predictor.predict(x_coeff_test)
 
-        # Восстанавливаем полные коэффициенты (a, b, c, d)
         full_predictions = []
         for i, (a_pred, d_pred) in enumerate(coeff_predictions):
             f0_pred, slope_pred = slope_predictions[i]
             b_pred = self._compute_b_from_slope(a_pred, slope_pred)
             c_pred = f0_pred
 
-            # Применяем constraints ОДИН РАЗ на финальные предсказания
             constrained = self.apply_constraints([a_pred, b_pred, c_pred, d_pred], metadata_test[i][0])
             full_predictions.append(constrained)
 
-        # Вычисляем метрики
         self._calculate_metrics(y_test, np.array(full_predictions), metadata_test)
 
     def _calculate_metrics(self, y_true, y_pred, metadata):
@@ -279,7 +260,6 @@ class RandomForestCombinedPredictor(BasePredictor):
             f0 = metadata[i][0]
             x_grid = np.linspace(f0 - 0.1 * f0, f0 + 0.1 * f0, 1000)
 
-            # y_pred уже содержит constrained значения
             true_curve = self.arctg_func(y_true[i], x_grid)
             pred_curve = self.arctg_func(y_pred[i], x_grid)
 
@@ -316,15 +296,12 @@ class RandomForestCombinedPredictor(BasePredictor):
         """Предсказание для новых данных"""
         input_features = np.array([[a_wg, b_wg, c_wg, d_wg, f0, f0 * b_wg, a_wg * b_wg]])
 
-        # Стадия 1: предсказываем (f0, slope)
         slope_pred = self.slope_predictor.predict(input_features)[0]
         f0_pred, slope_deg_pred = slope_pred
 
-        # Стадия 2: предсказываем (a, d)
         extended_features = np.hstack([input_features, [[f0_pred, slope_deg_pred]]])
         a_pred, d_pred = self.coeff_predictor.predict(extended_features)[0]
 
-        # Восстанавливаем b и c
         b_pred = self._compute_b_from_slope(a_pred, slope_deg_pred)
         c_pred = f0_pred
 
