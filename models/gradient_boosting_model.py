@@ -1,22 +1,10 @@
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
-from base_predictor import BasePredictor
+from .base_predictor import BasePredictor
 
 
 class GradientBoostingPredictor(BasePredictor):
-    """
-    Gradient Boosting модель с НАТИВНЫМ multi-output.
-
-    КЛЮЧЕВЫЕ ИЗМЕНЕНИЯ:
-    - Убран MultiOutputRegressor — используется нативный GB multi-output
-    - Добавлен early stopping через validation_fraction
-    - Расширен диапазон n_estimators (до 500)
-    - Скорректирован learning_rate (от 0.01)
-    - Убран max_features=None (оставлены только sqrt и log2)
-    - Используется FE/SE скорер
-    """
-
     def __init__(self, verbose=True, show_plots=False, random_state=42):
         super().__init__(verbose, show_plots, random_state)
 
@@ -28,7 +16,6 @@ class GradientBoostingPredictor(BasePredictor):
         if self.verbose:
             print(f"Обучение на {len(X_train)} samples, тест на {len(X_test)} samples")
 
-        # НАТИВНЫЙ GradientBoostingRegressor с early stopping
         model = GradientBoostingRegressor(
             random_state=self.random_state,
             validation_fraction=0.1,  # 10% для валидации
@@ -50,7 +37,7 @@ class GradientBoostingPredictor(BasePredictor):
 
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring=self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 

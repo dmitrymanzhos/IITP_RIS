@@ -143,9 +143,7 @@ class BasePredictor:  # родительский класс для всех мо
 
         return metrics
 
-    def _create_fe_se_scorer(self):
-        """Скорер, напрямую оптимизирующий FE и SE"""
-
+    def _create_fe_se_scorer(self):  #
         def fe_se_scorer(estimator, X, y):
             y_pred = estimator.predict(X)
             fe_errors = []
@@ -153,7 +151,6 @@ class BasePredictor:  # родительский класс для всех мо
 
             for i in range(len(y)):
                 f0 = X[i, 4]
-                # Не применяем constraints во время CV — даём модели свободу
                 fe = self._compute_frequency_error(y[i], y_pred[i], f0)
                 se = self._compute_slope_error(y[i], y_pred[i])
                 fe_errors.append(fe)
@@ -162,7 +159,7 @@ class BasePredictor:  # родительский класс для всех мо
             # SE переводим в % (*100) для сопоставимости с FE
             return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
 
-        return make_scorer(fe_se_scorer, greater_is_better=False)
+        return fe_se_scorer  # make_scorer(fe_se_scorer, greater_is_better=False)
 
     def predict(self, a_wg, b_wg, c_wg, d_wg, f0):
         input_data = np.array([[a_wg, b_wg, c_wg, d_wg, f0, f0 * b_wg, a_wg * b_wg]])

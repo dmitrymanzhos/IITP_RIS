@@ -4,7 +4,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split, cross_val_predict
 from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
 from scipy.stats import uniform
-from base_predictor import BasePredictor
+from .base_predictor import BasePredictor
 
 
 class GradientBoostingCombinedPredictor(BasePredictor):

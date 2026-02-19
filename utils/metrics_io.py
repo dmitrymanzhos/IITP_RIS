@@ -1,23 +1,8 @@
-"""
-Утилиты для сохранения и загрузки метрик моделей.
-"""
 import json
 import numpy as np
 
 
 def convert_numpy_to_python(obj):
-    """
-    Рекурсивно конвертирует numpy типы в Python типы для JSON сериализации.
-
-    Parameters:
-    -----------
-    obj : any
-        Объект для конвертации
-
-    Returns:
-    --------
-    any : Конвертированный объект
-    """
     if isinstance(obj, np.generic):
         return obj.item()
     elif isinstance(obj, np.ndarray):
@@ -115,7 +100,7 @@ def save_detailed_metrics(models_dict, filename="detailed_metrics.json"):
             'mse': {
                 'mean': metrics['mean_mse'],
                 'max': metrics['max_mse'],
-                'p95': metrics['mean_mse'] * 1.5  # Примерная оценка p95
+                'p95': metrics['mean_mse'] * 1.5  # Примерная оценка p95 TODO: исправить
             },
             'mae': {
                 'mean': metrics['mean_mae'],

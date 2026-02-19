@@ -3,22 +3,10 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split, cross_val_predict
 from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
 import math
-from base_predictor import BasePredictor
+from .base_predictor import BasePredictor
 
 
 class RandomForestCombinedPredictor(BasePredictor):
-    """
-    Двухстадийная Combined модель с ИСПРАВЛЕННОЙ архитектурой.
-
-    КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ:
-    1. Устранена утечка данных в _prepare_coeff_data (теперь принимает y_data)
-    2. Используется cross_val_predict для честной передачи slope во вторую модель
-    3. Обе модели обучаются на полном X_temp (не разбиваются 50/50)
-    4. Нативный RandomForestRegressor вместо MultiOutputRegressor
-    5. Нормализованный скорер для первой модели
-    6. FE/SE скорер для второй модели
-    """
-
     def __init__(self, verbose=True, show_plots=False, random_state=42):
         super().__init__(verbose, show_plots, random_state)
         self.slope_predictor = None

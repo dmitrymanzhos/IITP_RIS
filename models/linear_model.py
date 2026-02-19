@@ -3,21 +3,10 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
-from base_predictor import BasePredictor
+from .base_predictor import BasePredictor
 
 
 class LinearPredictor(BasePredictor):
-    """
-    Линейная модель с Ridge регуляризацией.
-
-    ИЗМЕНЕНИЯ:
-    - Убран random_state из Ridge (не поддерживается)
-    - Расширен диапазон alpha (до 1000)
-    - Убраны технические параметры (tol, max_iter, solver)
-    - Добавлен StandardScaler для нормализации признаков
-    - Используется FE/SE скорер вместо MAE по кривой
-    """
-
     def __init__(self, verbose=True, show_plots=False, random_state=42):
         super().__init__(verbose, show_plots, random_state)
 
@@ -29,13 +18,11 @@ class LinearPredictor(BasePredictor):
         if self.verbose:
             print(f"Обучение на {len(X_train)} samples, тест на {len(X_test)} samples")
 
-        # Pipeline с нормализацией и Ridge
         model = Pipeline([
             ('scaler', StandardScaler()),
             ('ridge', Ridge())
         ])
 
-        # Упрощённая сетка — только значимые параметры
         param_grid = {
             'ridge__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0],
             'ridge__fit_intercept': [True, False],
@@ -46,7 +33,7 @@ class LinearPredictor(BasePredictor):
         # Используем FE/SE скорер из базового класса
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring=self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 

@@ -1,21 +1,10 @@
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
-from base_predictor import BasePredictor
+from .base_predictor import BasePredictor
 
 
 class RandomForestPredictor(BasePredictor):
-    """
-    Random Forest модель с НАТИВНЫМ multi-output.
-
-    КЛЮЧЕВЫЕ ИЗМЕНЕНИЯ:
-    - Убран MultiOutputRegressor — используется нативный RF multi-output
-    - Это позволяет модели учитывать корреляции между выходами (a, b, c, d)
-    - Расширен диапазон max_depth до [3, 4, 5, 6, None]
-    - Добавлен bootstrap в сетку поиска
-    - Используется FE/SE скорер
-    """
-
     def __init__(self, verbose=True, show_plots=False, random_state=42):
         super().__init__(verbose, show_plots, random_state)
 
@@ -27,24 +16,23 @@ class RandomForestPredictor(BasePredictor):
         if self.verbose:
             print(f"Обучение на {len(X_train)} samples, тест на {len(X_test)} samples")
 
-        # НАТИВНЫЙ RandomForestRegressor — работает с multi-output напрямую
         model = RandomForestRegressor(random_state=self.random_state)
 
         param_grid = {
             'n_estimators': [100, 200, 300, 400],
-            'max_depth': [3, 4, 5, 6, None],  # Расширен диапазон
+            'max_depth': [3, 4, 5, 6, None],
             'min_samples_split': [2, 5, 10, 15],
             'min_samples_leaf': [1, 2, 3, 4],
             'max_features': ['sqrt', 'log2'],
-            'bootstrap': [True, False],  # Добавлен в поиск
-            'max_samples': [0.7, 0.8, 0.9, None],  # Для bootstrap=True
+            'bootstrap': [True],
+            'max_samples': [0.7, 0.8, 0.9, None],
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
 
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring=self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 

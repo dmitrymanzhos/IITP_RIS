@@ -17,10 +17,6 @@ from utils import save_detailed_metrics, plot_model_comparison, plot_metrics_tab
 
 
 def load_data(file_paths, normalize_by_f0=True):
-    """
-    Загрузка датасета из предобработанных файлов.
-    БЕЗ СТРАТИФИКАЦИИ - все данные обрабатываются одинаково.
-    """
     all_data = []
     pattern = r'f=([\d.]+)GHz\s*er1=([\d.]+)\s*H=([\d.]+)\s*w=([\d.]+)\s*A=([\d.]+)\s*L=([\d.]+)'
 
@@ -63,8 +59,7 @@ def load_data(file_paths, normalize_by_f0=True):
         a_wg, b_wg, c_wg, d_wg = item[0][:4]
         f0 = item[1][0]
 
-        if normalize_by_f0:
-            # Нормализация признаков по f0
+        if normalize_by_f0:  # TODO: Нормализация признаков по f0 - нужна ли
             features.append([
                 a_wg,
                 b_wg * f0,
@@ -86,7 +81,7 @@ def load_data(file_paths, normalize_by_f0=True):
 
     print(f"\nЗагружено {len(features)} примеров")
     if normalize_by_f0:
-        print("Признаки нормализованы по f0 для устранения кластерной структуры")
+        print("Признаки нормализованы по f0")
 
     return {
         'x': np.array(features),
@@ -96,21 +91,16 @@ def load_data(file_paths, normalize_by_f0=True):
 
 
 def main():
-    """
-    Основной скрипт для обучения и сравнения моделей.
-    """
     data_files = [
-        "ph_post_processed_data_new1_f=1GHz_sorted.txt",
-        "ph_post_processed_data_new1_f=5GHz_sorted.txt",
-        "ph_post_processed_data_new1_f=10GHz_sorted.txt",
-        "ph_post_processed_data_new1_f=20GHz_sorted.txt",
-        "ph_post_processed_data_new1_f=60GHz_sorted.txt"
-    ]
+        "approximated_data/ph_post_processed_data_new1_f=1GHz_sorted.txt",
+        "approximated_data/ph_post_processed_data_new1_f=5GHz_sorted.txt",
+        "approximated_data/ph_post_processed_data_new1_f=10GHz_sorted.txt",
+        "approximated_data/ph_post_processed_data_new1_f=20GHz_sorted.txt",
+        "approximated_data/ph_post_processed_data_new1_f=60GHz_sorted.txt"
+    ]  # предобработанный датасет
 
-    # Загрузка данных с нормализацией по f0
     data = load_data(data_files, normalize_by_f0=True)
 
-    # Создание моделей
     models = {
         'Linear': LinearPredictor(verbose=True, show_plots=False),
         'RandomForest': RandomForestPredictor(verbose=True, show_plots=False),
@@ -123,10 +113,6 @@ def main():
     results = {}
     trained_models = {}
 
-    print("\n" + "=" * 80)
-    print("НАЧАЛО ОБУЧЕНИЯ МОДЕЛЕЙ")
-    print("=" * 80 + "\n")
-
     for name, model in models.items():
         print(f"\n{'=' * 80}")
         print(f"МОДЕЛЬ: {name}")
@@ -134,9 +120,7 @@ def main():
 
         try:
             model.load_data(data)
-
-            # Для Combined моделей задаём параметры для обеих стадий
-            if 'Combined' in name:
+            if 'Combined' in name:  # для двухэтапных (сombined) моделей задаём параметры для обоих этапов
                 if name == 'LinearCombined':
                     model.train(n_iter_slope=30, n_iter_coeff=30)
                 elif name == 'GradientBoostingCombined':
@@ -160,26 +144,22 @@ def main():
             print(f"{'=' * 80}\n")
 
         except Exception as e:
-            print(f"❌ Ошибка при обучении модели {name}: {e}")
+            print(f"Ошибка при обучении модели {name}: {e}")
             import traceback
             traceback.print_exc()
             continue
 
     if not results:
-        print("❌ Ни одна модель не обучилась успешно!")
+        print("Ни одна модель не обучилась успешно!")
         return
 
-    # Сохранение результатов
-    output_dir = 'results'
+    output_dir = 'results_json'
     os.makedirs(output_dir, exist_ok=True)
-
-    # Сохранение детализированных метрик для графиков
     print("\n" + "=" * 80)
     print("СОХРАНЕНИЕ МЕТРИК")
     print("=" * 80)
     save_detailed_metrics(trained_models, f"{output_dir}/detailed_metrics.json")
 
-    # Построение графиков
     print("\n" + "=" * 80)
     print("ПОСТРОЕНИЕ ГРАФИКОВ")
     print("=" * 80)
@@ -188,13 +168,11 @@ def main():
         output_dir="result_plots"
     )
 
-    # Таблица метрик
     plot_metrics_table(
         metrics_path=f"{output_dir}/detailed_metrics.json",
         output_path="result_plots/metrics_table.txt"
     )
 
-    # Сводная таблица в консоль
     print("\n" + "=" * 80)
     print("СВОДНАЯ ТАБЛИЦА РЕЗУЛЬТАТОВ")
     print("=" * 80)
