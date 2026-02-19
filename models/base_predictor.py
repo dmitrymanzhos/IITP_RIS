@@ -1,6 +1,6 @@
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
@@ -44,7 +44,7 @@ class BasePredictor:  # родительский класс для всех мо
         if b <= 0:
             b = 0.01
         if f0 is not None:
-            c = np.clip(c, f0 - 0.1 * f0, f0 + 0.1 * f0)
+            c = np.clip(c, f0 - 0.05 * f0, f0 + 0.05 * f0)
         return [a, b, c, d]
 
     def _compute_frequency_error(self, true_coeffs, pred_coeffs, f0):  # вычисление FE
@@ -70,26 +70,28 @@ class BasePredictor:  # родительский класс для всех мо
         else:
             return abs(slope_true - slope_pred) / abs(slope_true)
 
-    def _compute_metrics(self, X, y_true, y_pred, metadata):  # возвращает все метрики в 1 словаре
-        mse_v, mae_v, me_v, fe_v, se_v = [], [], [], [], []
-        for i in range(len(y_true)):
-            f0 = metadata[i][0]
-            x_grid = np.linspace(f0 - 0.1 * f0, f0 + 0.1 * f0, 1000)
-            tc = self.arctg_func(y_true[i], x_grid)
-            pc = self.arctg_func(self.apply_constraints(y_pred[i], f0), x_grid)
-            from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error
-            mse_v.append(mean_squared_error(tc, pc))
-            mae_v.append(mean_absolute_error(tc, pc))
-            me_v.append(max_error(tc, pc))
-            fe_v.append(self._compute_frequency_error(y_true[i], y_pred[i], f0))
-            se_v.append(self._compute_slope_error(y_true[i], y_pred[i]))
-        return {
-            'mean_mse': np.mean(mse_v), 'mean_mae': np.mean(mae_v),
-            'mean_me': np.mean(me_v), 'mean_freq_error': np.mean(fe_v),
-            'mean_slope_error': np.mean(se_v)
-        }
+    def _evaluate_curves(self, X_eval, y_eval, y_pred, metadata_eval, save_to_self=True):
+        """
+        УНИФИЦИРОВАННЫЙ метод вычисления метрик.
 
-    def _evaluate_curves(self, X_eval, y_eval, y_pred, metadata_eval):  # вычисление метрик
+        Параметры:
+        ----------
+        X_eval : array-like
+            Входные признаки для оценки
+        y_eval : array-like
+            Истинные целевые значения (коэффициенты a, b, c, d)
+        y_pred : array-like
+            Предсказанные целевые значения
+        metadata_eval : list
+            Метаданные для каждого примера (f0, H, er1, ...)
+        save_to_self : bool, default=True
+            Если True, сохраняет метрики в self.mean_*, self.max_*
+            Если False, только возвращает словарь метрик
+
+        Возвращает:
+        -----------
+        dict : Словарь с метриками
+        """
         mse_values = []
         mae_values = []
         me_values = []
@@ -108,28 +110,66 @@ class BasePredictor:  # родительский класс для всех мо
             freq_errors.append(self._compute_frequency_error(y_eval[i], y_pred[i], f0))
             slope_errors.append(self._compute_slope_error(y_eval[i], y_pred[i]))
 
-        self.mean_mse = np.mean(mse_values)
-        self.mean_mae = np.mean(mae_values)
-        self.mean_me = np.mean(me_values)
-        self.max_mse = np.max(mse_values)
-        self.max_mae = np.max(mae_values)
-        self.max_me = np.max(me_values)
-        self.mean_freq_error = np.mean(freq_errors)
-        self.max_freq_error = np.max(freq_errors)
-        self.mean_slope_error = np.mean(slope_errors)
-        self.max_slope_error = np.max(slope_errors)
+        metrics = {
+            'mean_mse': np.mean(mse_values),
+            'mean_mae': np.mean(mae_values),
+            'mean_me': np.mean(me_values),
+            'max_mse': np.max(mse_values),
+            'max_mae': np.max(mae_values),
+            'max_me': np.max(me_values),
+            'mean_freq_error': np.mean(freq_errors),
+            'max_freq_error': np.max(freq_errors),
+            'mean_slope_error': np.mean(slope_errors),
+            'max_slope_error': np.max(slope_errors)
+        }
 
-        if self.verbose:
-            print(f"Средняя MSE: {self.mean_mse:.4f}")
-            print(f"Средняя MAE: {self.mean_mae:.4f}")
-            print(f"Средняя ошибка частоты: {self.mean_freq_error:.2f}%")
+        if save_to_self:
+            self.mean_mse = metrics['mean_mse']
+            self.mean_mae = metrics['mean_mae']
+            self.mean_me = metrics['mean_me']
+            self.max_mse = metrics['max_mse']
+            self.max_mae = metrics['max_mae']
+            self.max_me = metrics['max_me']
+            self.mean_freq_error = metrics['mean_freq_error']
+            self.max_freq_error = metrics['max_freq_error']
+            self.mean_slope_error = metrics['mean_slope_error']
+            self.max_slope_error = metrics['max_slope_error']
+
+            if self.verbose:
+                print(f"Средняя MSE: {self.mean_mse:.4f}")
+                print(f"Средняя MAE: {self.mean_mae:.4f}")
+                print(f"Средняя ошибка частоты (FE): {self.mean_freq_error:.2f}%")
+                print(f"Средняя ошибка наклона (SE): {self.mean_slope_error:.4f}")
+
+        return metrics
+
+    def _create_fe_se_scorer(self):
+        """Скорер, напрямую оптимизирующий FE и SE"""
+
+        def fe_se_scorer(estimator, X, y):
+            y_pred = estimator.predict(X)
+            fe_errors = []
+            se_errors = []
+
+            for i in range(len(y)):
+                f0 = X[i, 4]
+                # Не применяем constraints во время CV — даём модели свободу
+                fe = self._compute_frequency_error(y[i], y_pred[i], f0)
+                se = self._compute_slope_error(y[i], y_pred[i])
+                fe_errors.append(fe)
+                se_errors.append(se)
+
+            # SE переводим в % (*100) для сопоставимости с FE
+            return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
+
+        return make_scorer(fe_se_scorer, greater_is_better=False)
 
     def predict(self, a_wg, b_wg, c_wg, d_wg, f0):
         input_data = np.array([[a_wg, b_wg, c_wg, d_wg, f0, f0 * b_wg, a_wg * b_wg]])
         pred = self.model.predict(input_data)[0]
         return self.apply_constraints(pred, f0)
 
-    def get_metrics(self):  # возвращает метрики в вде словаря для удобной записи в файл
+    def get_metrics(self):  # возвращает метрики в виде словаря для удобной записи в файл
         return {
             'mean_mse': self.mean_mse,
             'mean_mae': self.mean_mae,
@@ -143,12 +183,20 @@ class BasePredictor:  # родительский класс для всех мо
             'max_slope_error': self.max_slope_error
         }
 
-    def evaluate_overfitting(self, X_train, y_train, metadata_train):  # оценка переобучения
+    def evaluate_overfitting(self, X_train, y_train, metadata_train):
+        """
+        Оценка переобучения через сравнение метрик на train и test.
+        Теперь использует _evaluate_curves с save_to_self=False для train.
+        """
         if self.model is None:
             print("Модель не обучена")
             return
+
         y_pred_train = self.model.predict(X_train)
-        train_metrics = self._compute_metrics(X_train, y_train, y_pred_train, metadata_train)
+        # Получаем метрики на train, НЕ сохраняя в self
+        train_metrics = self._evaluate_curves(X_train, y_train, y_pred_train, metadata_train, save_to_self=False)
+
+        # Метрики на test уже сохранены в self после вызова train()
         test_metrics = {
             'mean_mse': self.mean_mse,
             'mean_mae': self.mean_mae,
@@ -156,8 +204,10 @@ class BasePredictor:  # родительский класс для всех мо
             'mean_freq_error': self.mean_freq_error,
             'mean_slope_error': self.mean_slope_error
         }
+
         self._print_overfitting_report(train_metrics, test_metrics)
-        if hasattr(self, 'model') and hasattr(self.model, 'estimators_'):
+
+        if hasattr(self.model, 'estimators_'):
             self._analyze_tree_depth()
 
     def _print_overfitting_report(self, train_metrics, test_metrics):
@@ -168,6 +218,9 @@ class BasePredictor:  # родительский класс для всех мо
             'mean_freq_error': 'Freq Error %',
             'mean_slope_error': 'Slope Error'
         }
+        print("\n" + "=" * 80)
+        print("АНАЛИЗ ПЕРЕОБУЧЕНИЯ")
+        print("=" * 80)
         for metric_key, metric_name in metrics_names.items():
             train_val = train_metrics[metric_key]
             test_val = test_metrics[metric_key]
@@ -177,12 +230,24 @@ class BasePredictor:  # родительский класс для всех мо
                   f"Разница: {difference:8.4f} | Коэффициент: {overfitting_ratio:5.2f}x")
 
     def _analyze_tree_depth(self):
-        if not hasattr(self.model, 'estimators_'):
-            return
+        """Анализ глубины деревьев для нативных RF/GB (без MultiOutputRegressor)"""
         depths = []
-        for output_estimator in self.model.estimators_:  # по числу выходов
-            if hasattr(output_estimator, 'estimators_'):  # RF внутри MultiOutput
-                for tree in output_estimator.estimators_:
-                    depths.append(tree.tree_.max_depth)
+
+        # Случай: Нативный RandomForestRegressor или GradientBoostingRegressor
+        if hasattr(self.model, 'estimators_'):
+            for tree_estimator in self.model.estimators_:
+                # Для RandomForest: estimators_ это список деревьев
+                if hasattr(tree_estimator, 'tree_'):
+                    depths.append(tree_estimator.tree_.max_depth)
+                # Для GradientBoosting: estimators_ это массив массивов деревьев
+                elif hasattr(tree_estimator, '__iter__'):
+                    for tree in tree_estimator:
+                        if hasattr(tree, 'tree_'):
+                            depths.append(tree.tree_.max_depth)
+
         if depths:
-            print(f"  Средняя: {np.mean(depths):.1f}, Макс: {np.max(depths)}, Мин: {np.min(depths)}")
+            print(f"\nГЛУБИНА ДЕРЕВЬЕВ:")
+            print(f"  Средняя: {np.mean(depths):.1f}")
+            print(f"  Максимальная: {np.max(depths)}")
+            print(f"  Минимальная: {np.min(depths)}")
+            print("=" * 80 + "\n")
