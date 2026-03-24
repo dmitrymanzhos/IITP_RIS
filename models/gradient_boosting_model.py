@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
 from .base_predictor import BasePredictor
 
@@ -16,28 +17,31 @@ class GradientBoostingPredictor(BasePredictor):
         if self.verbose:
             print(f"Обучение на {len(X_train)} samples, тест на {len(X_test)} samples")
 
-        model = GradientBoostingRegressor(
+        # ИСПРАВЛЕНО: GradientBoostingRegressor не поддерживает multi-output нативно
+        # Используем MultiOutputRegressor
+        base_model = GradientBoostingRegressor(
             random_state=self.random_state,
-            validation_fraction=0.1,  # 10% для валидации
-            n_iter_no_change=20,  # остановка, если 20 итераций без улучшения
+            validation_fraction=0.1,
+            n_iter_no_change=20,
             tol=1e-4
         )
+        model = MultiOutputRegressor(base_model)
 
         param_grid = {
-            'n_estimators': [100, 200, 300, 500],  # Расширен верхний предел
-            'learning_rate': [0.01, 0.05, 0.1, 0.15],  # Добавлен 0.01 для больших n_estimators
-            'max_depth': [3, 4, 5, 6],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4],
-            'subsample': [0.7, 0.8, 0.9, 1.0],
-            'max_features': ['sqrt', 'log2'],  # Убран None — избегаем полной корреляции
+            'estimator__n_estimators': [100, 200, 300, 500],
+            'estimator__learning_rate': [0.01, 0.05, 0.1, 0.15],
+            'estimator__max_depth': [3, 4, 5, 6],
+            'estimator__min_samples_split': [2, 5, 10],
+            'estimator__min_samples_leaf': [1, 2, 4],
+            'estimator__subsample': [0.7, 0.8, 0.9, 1.0],
+            'estimator__max_features': ['sqrt', 'log2'],
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
 
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 
@@ -46,13 +50,16 @@ class GradientBoostingPredictor(BasePredictor):
 
         if self.verbose:
             print(f"Лучшие параметры: {search.best_params_}")
-            print(f"Лучший score (-(FE + SE*100)): {search.best_score_:.4f}")
+            print(f"Лучший score: {search.best_score_:.4f}")
 
             # Проверяем, сработал ли early stopping
-            if hasattr(self.model, 'n_estimators_'):
-                print(f"Фактическое количество деревьев (с early stopping): {self.model.n_estimators_}")
+            if hasattr(self.model.estimators_[0], 'n_estimators_'):
+                print(f"Фактическое количество деревьев (с early stopping): {self.model.estimators_[0].n_estimators_}")
 
-            self.evaluate_overfitting(X_train, y_train, metadata_train)
-
+        # ИСПРАВЛЕНО: Сначала вычисляем метрики на test
         y_pred_test = self.model.predict(X_test)
         self._evaluate_curves(X_test, y_test, y_pred_test, metadata_test)
+
+        # ИСПРАВЛЕНО: Теперь evaluate_overfitting вызывается ПОСЛЕ
+        if self.verbose:
+            self.evaluate_overfitting(X_train, y_train, metadata_train)

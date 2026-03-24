@@ -99,15 +99,15 @@ def main():
         "approximated_data/ph_post_processed_data_new1_f=60GHz_sorted.txt"
     ]  # предобработанный датасет
 
-    data = load_data(data_files, normalize_by_f0=True)
+    data = load_data(data_files, normalize_by_f0=False)
 
     models = {
         'Linear': LinearPredictor(verbose=True, show_plots=False),
         'RandomForest': RandomForestPredictor(verbose=True, show_plots=False),
         'GradientBoosting': GradientBoostingPredictor(verbose=True, show_plots=False),
         'LinearCombined': LinearCombinedPredictor(verbose=True, show_plots=False),
-        'GradientBoostingCombined': GradientBoostingCombinedPredictor(verbose=True, show_plots=False),
-        'RandomForestCombined': RandomForestCombinedPredictor(verbose=True, show_plots=False)
+        'RandomForestCombined': RandomForestCombinedPredictor(verbose=True, show_plots=False),
+        'GradientBoostingCombined': GradientBoostingCombinedPredictor(verbose=True, show_plots=False)
     }
 
     results = {}
@@ -164,12 +164,12 @@ def main():
     print("ПОСТРОЕНИЕ ГРАФИКОВ")
     print("=" * 80)
     plot_model_comparison(
-        metrics_path=f"{output_dir}/detailed_metrics.json",
+        metrics_path=f"{output_dir}/tmp_metrics.json",  # metrics_path=f"{output_dir}/detailed_metrics.json",
         output_dir="result_plots"
     )
 
     plot_metrics_table(
-        metrics_path=f"{output_dir}/detailed_metrics.json",
+        metrics_path=f"{output_dir}/tmp_metrics.json",  # metrics_path=f"{output_dir}/detailed_metrics.json",
         output_path="result_plots/metrics_table.txt"
     )
 

@@ -1,6 +1,3 @@
-"""
-Утилиты для построения графиков сравнения моделей.
-"""
 import os
 import json
 import math
@@ -33,14 +30,13 @@ def plot_model_comparison(
     with open(metrics_path, 'r') as f:
         data = json.load(f)
 
-    # Модели и их цвета
     model_order = [
         'Linear',
         'RandomForest',
         'GradientBoosting',
         'LinearCombined',
-        'GradientBoostingCombined',
-        'RandomForestCombined'
+        'RandomForestCombined',
+        'GradientBoostingCombined'
     ]
 
     model_colors = {
@@ -48,8 +44,8 @@ def plot_model_comparison(
         'RandomForest': '#e76a6a',
         'GradientBoosting': '#6fbf6f',
         'LinearCombined': '#1f77b4',
-        'GradientBoostingCombined': '#2ca02c',
-        'RandomForestCombined': '#d62728'
+        'RandomForestCombined': '#d62728',
+        'GradientBoostingCombined': '#2ca02c'
     }
 
     model_labels = {
@@ -57,8 +53,8 @@ def plot_model_comparison(
         'RandomForest': 'RF',
         'GradientBoosting': 'GB',
         'LinearCombined': 'Linear\nCombined',
-        'GradientBoostingCombined': 'GB\nCombined',
-        'RandomForestCombined': 'RF\nCombined'
+        'RandomForestCombined': 'RF\nCombined',
+        'GradientBoostingCombined': 'GB\nCombined'
     }
 
     metrics = {
@@ -68,10 +64,7 @@ def plot_model_comparison(
         'slope_error': 'SE, %'
     }
 
-    # Фильтруем только присутствующие модели
     available_models = [m for m in model_order if m in data]
-
-    # Презентационные шрифты
     plt.rcParams.update({
         'font.size': 22,
         'axes.labelsize': 26,

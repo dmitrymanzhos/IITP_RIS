@@ -39,11 +39,19 @@ class RandomForestCombinedPredictor(BasePredictor):
         return f0, slope
 
     def _compute_b_from_slope(self, a_pred, slope_pred):
-        """Восстановление b из a и slope"""
+        """
+        ИСПРАВЛЕНО: Восстановление b из a и slope.
+
+        Формула: slope = atan(|a * b|)
+        => |a * b| = tan(slope)
+        => b = tan(slope) / |a|
+        """
         if abs(a_pred) < 1e-10:
-            return 0.01  # Минимальное значение
+            return 0.01
         slope_rad = slope_pred * (math.pi / 180)
-        return math.tan(slope_rad) / abs(a_pred)
+        derivative_magnitude = math.tan(slope_rad)
+        b_pred = derivative_magnitude / abs(a_pred)
+        return abs(b_pred)
 
     def _create_slope_scorer(self):
         """
@@ -67,7 +75,8 @@ class RandomForestCombinedPredictor(BasePredictor):
             w_slope = 5.0
             return -(mae_f0_normalized + w_slope * mae_slope_normalized)
 
-        return make_scorer(normalized_scorer, greater_is_better=False)
+        # ИСПРАВЛЕНО: Возвращаем функцию напрямую, БЕЗ make_scorer
+        return normalized_scorer
 
     def _create_coeff_scorer(self):
         """
@@ -109,7 +118,8 @@ class RandomForestCombinedPredictor(BasePredictor):
             # Минимизируем сумму FE + SE*100
             return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
 
-        return make_scorer(fe_se_scorer, greater_is_better=False)
+        # ИСПРАВЛЕНО: Возвращаем функцию напрямую, БЕЗ make_scorer
+        return fe_se_scorer
 
     def train(self, test_size=0.2, n_iter=50, cv_splits=5):
         """
@@ -174,14 +184,14 @@ class RandomForestCombinedPredictor(BasePredictor):
         """Обучение первой модели: X -> (f0, slope)"""
         model = RandomForestRegressor(random_state=self.random_state)
 
+        # ИСПРАВЛЕНО: убран max_samples, так как он конфликтует с bootstrap=False
         param_grid = {
             'n_estimators': [100, 200, 300, 400],
             'max_depth': [3, 4, 5, 6, None],
             'min_samples_split': [2, 5, 10, 15],
             'min_samples_leaf': [1, 2, 3, 4],
             'max_features': ['sqrt', 'log2'],
-            'bootstrap': [True, False],
-            'max_samples': [0.7, 0.8, 0.9, None],
+            'bootstrap': [True],  # Оставляем только True
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
@@ -204,14 +214,14 @@ class RandomForestCombinedPredictor(BasePredictor):
         """Обучение второй модели: (X + slope) -> (a, d)"""
         model = RandomForestRegressor(random_state=self.random_state)
 
+        # ИСПРАВЛЕНО: убран max_samples, так как он конфликтует с bootstrap=False
         param_grid = {
             'n_estimators': [100, 200, 300, 400],
             'max_depth': [3, 4, 5, 6, None],
             'min_samples_split': [2, 5, 10, 15],
             'min_samples_leaf': [1, 2, 3, 4],
             'max_features': ['sqrt', 'log2'],
-            'bootstrap': [True, False],
-            'max_samples': [0.7, 0.8, 0.9, None],
+            'bootstrap': [True],  # Оставляем только True
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)

@@ -32,7 +32,7 @@ class RandomForestPredictor(BasePredictor):
 
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 
@@ -41,8 +41,10 @@ class RandomForestPredictor(BasePredictor):
 
         if self.verbose:
             print(f"Лучшие параметры: {search.best_params_}")
-            print(f"Лучший score (-(FE + SE*100)): {search.best_score_:.4f}")
-            self.evaluate_overfitting(X_train, y_train, metadata_train)
+            print(f"Лучший score: {search.best_score_:.4f}")
 
         y_pred_test = self.model.predict(X_test)
         self._evaluate_curves(X_test, y_test, y_pred_test, metadata_test)
+
+        if self.verbose:
+            self.evaluate_overfitting(X_train, y_train, metadata_train)

@@ -62,7 +62,7 @@ class Parser:
                                 except Exception as e:
                                     print(f"!!!{fs_path}")
 
-        self.plot_errors_distribution()
+        self._plot_approximation_error_distribution()
         return
 
     def _parse_free_space(self, filename):

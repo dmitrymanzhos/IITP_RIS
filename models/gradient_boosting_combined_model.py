@@ -1,8 +1,9 @@
 import numpy as np
 import math
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split, cross_val_predict
-from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
+from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error
 from scipy.stats import uniform
 from .base_predictor import BasePredictor
 
@@ -49,14 +50,22 @@ class GradientBoostingCombinedPredictor(BasePredictor):
         return f0, slope
 
     def _compute_b_from_slope(self, a_pred, slope_pred):
-        """Восстановление b из a и slope"""
+        """
+        ИСПРАВЛЕНО: Восстановление b из a и slope.
+
+        Формула: slope = atan(|a * b|)
+        => |a * b| = tan(slope)
+        => b = tan(slope) / |a|
+        """
         if abs(a_pred) < 1e-10:
             return 0.01
         slope_rad = slope_pred * (math.pi / 180)
-        return math.tan(slope_rad) / abs(a_pred)
+        derivative_magnitude = math.tan(slope_rad)
+        b_pred = derivative_magnitude / abs(a_pred)
+        return abs(b_pred)
 
     def _create_slope_scorer(self):
-        """Нормализованный скорер для (f0, slope)"""
+        """ИСПРАВЛЕНО: Нормализованный скорер для (f0, slope)"""
 
         def normalized_scorer(estimator, X, y):
             y_pred = estimator.predict(X)
@@ -71,10 +80,11 @@ class GradientBoostingCombinedPredictor(BasePredictor):
             w_slope = 5.0
             return -(mae_f0_normalized + w_slope * mae_slope_normalized)
 
-        return make_scorer(normalized_scorer, greater_is_better=False)
+        # ИСПРАВЛЕНО: Возвращаем функцию напрямую, БЕЗ make_scorer
+        return normalized_scorer
 
     def _create_coeff_scorer(self):
-        """Скорер напрямую оптимизирует FE и SE"""
+        """ИСПРАВЛЕНО: Скорер напрямую оптимизирует FE и SE"""
 
         def fe_se_scorer(estimator, X, y):
             y_pred = estimator.predict(X)
@@ -107,7 +117,8 @@ class GradientBoostingCombinedPredictor(BasePredictor):
 
             return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
 
-        return make_scorer(fe_se_scorer, greater_is_better=False)
+        # ИСПРАВЛЕНО: Возвращаем функцию напрямую, БЕЗ make_scorer
+        return fe_se_scorer
 
     def train(self, test_size=0.2, n_iter_slope=50, n_iter_coeff=50, cv_splits=5):
         """
@@ -175,21 +186,23 @@ class GradientBoostingCombinedPredictor(BasePredictor):
 
     def _train_slope_predictor(self, x_train, y_slope_train, n_iter, cv_splits):
         """Обучение первой модели: X -> (f0, slope)"""
-        model = GradientBoostingRegressor(
+        # ИСПРАВЛЕНО: GB не поддерживает multi-output, оборачиваем в MultiOutputRegressor
+        base_model = GradientBoostingRegressor(
             random_state=self.random_state,
             validation_fraction=0.1,
             n_iter_no_change=20,
             tol=1e-4
         )
+        model = MultiOutputRegressor(base_model)
 
         param_grid = {
-            'n_estimators': [100, 200, 300],
-            'learning_rate': uniform(0.01, 0.14),
-            'max_depth': [2, 3, 4, 5],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4],
-            'subsample': [0.7, 0.8, 0.9, 1.0],
-            'max_features': ['sqrt', 'log2']
+            'estimator__n_estimators': [100, 200, 300],
+            'estimator__learning_rate': uniform(0.01, 0.14),
+            'estimator__max_depth': [2, 3, 4, 5],
+            'estimator__min_samples_split': [2, 5, 10],
+            'estimator__min_samples_leaf': [1, 2, 4],
+            'estimator__subsample': [0.7, 0.8, 0.9, 1.0],
+            'estimator__max_features': ['sqrt', 'log2']
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
@@ -205,28 +218,30 @@ class GradientBoostingCombinedPredictor(BasePredictor):
             print(f"\nSLOPE MODEL (GB):")
             print(f"  Лучшие параметры: {search.best_params_}")
             print(f"  Лучший score: {search.best_score_:.4f}")
-            if hasattr(search.best_estimator_, 'n_estimators_'):
-                print(f"  Фактическое кол-во деревьев: {search.best_estimator_.n_estimators_}")
+            if hasattr(search.best_estimator_.estimators_[0], 'n_estimators_'):
+                print(f"  Фактическое кол-во деревьев: {search.best_estimator_.estimators_[0].n_estimators_}")
 
         return search.best_estimator_
 
     def _train_coeff_predictor(self, x_coeff_train, y_coeff_train, n_iter, cv_splits):
         """Обучение второй модели: (X + slope) -> (a, d)"""
-        model = GradientBoostingRegressor(
+        # ИСПРАВЛЕНО: GB не поддерживает multi-output, оборачиваем в MultiOutputRegressor
+        base_model = GradientBoostingRegressor(
             random_state=self.random_state,
             validation_fraction=0.1,
             n_iter_no_change=20,
             tol=1e-4
         )
+        model = MultiOutputRegressor(base_model)
 
         param_grid = {
-            'n_estimators': [100, 200, 300, 500],
-            'learning_rate': uniform(0.01, 0.14),
-            'max_depth': [3, 4, 5, 6],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4],
-            'subsample': [0.7, 0.8, 0.9, 1.0],
-            'max_features': ['sqrt', 'log2']
+            'estimator__n_estimators': [100, 200, 300, 500],
+            'estimator__learning_rate': uniform(0.01, 0.14),
+            'estimator__max_depth': [3, 4, 5, 6],
+            'estimator__min_samples_split': [2, 5, 10],
+            'estimator__min_samples_leaf': [1, 2, 4],
+            'estimator__subsample': [0.7, 0.8, 0.9, 1.0],
+            'estimator__max_features': ['sqrt', 'log2']
         }
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
@@ -242,8 +257,8 @@ class GradientBoostingCombinedPredictor(BasePredictor):
             print(f"\nCOEFF MODEL (GB):")
             print(f"  Лучшие параметры: {search.best_params_}")
             print(f"  Лучший score: {search.best_score_:.4f}")
-            if hasattr(search.best_estimator_, 'n_estimators_'):
-                print(f"  Фактическое кол-во деревьев: {search.best_estimator_.n_estimators_}\n")
+            if hasattr(search.best_estimator_.estimators_[0], 'n_estimators_'):
+                print(f"  Фактическое кол-во деревьев: {search.best_estimator_.estimators_[0].n_estimators_}\n")
 
         return search.best_estimator_
 

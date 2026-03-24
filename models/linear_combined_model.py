@@ -4,7 +4,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split, cross_val_predict
-from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error, make_scorer
+from sklearn.metrics import mean_squared_error, mean_absolute_error, max_error
 from .base_predictor import BasePredictor
 
 
@@ -15,10 +15,6 @@ class LinearCombinedPredictor(BasePredictor):
     АРХИТЕКТУРА:
     Стадия 1 (slope_predictor): Linear Ridge → (f0, slope)
     Стадия 2 (coeff_predictor): Linear Ridge → (a, d)
-
-    Полностью аналогична RandomForestCombinedPredictor, но использует
-    линейную регрессию вместо случайного леса. Быстрее, проще,
-    но может быть менее точной на нелинейных зависимостях.
     """
 
     def __init__(self, verbose=True, show_plots=False, random_state=42):
@@ -50,11 +46,40 @@ class LinearCombinedPredictor(BasePredictor):
         return f0, slope
 
     def _compute_b_from_slope(self, a_pred, slope_pred):
-        """Восстановление b из a и slope"""
+        """
+        ИСПРАВЛЕНО: Восстановление b из a и slope.
+
+        Формула:
+        slope_rad = atan(|a * b|)
+        |a * b| = tan(slope_rad)
+
+        Если a и b одного знака (почти всегда):
+        b = tan(slope_rad) / a
+
+        Но нужно учесть знак! В вашей задаче обычно a < 0, b > 0,
+        поэтому a*b < 0, и мы берём abs.
+        """
         if abs(a_pred) < 1e-10:
             return 0.01
+
         slope_rad = slope_pred * (math.pi / 180)
-        return math.tan(slope_rad) / abs(a_pred)
+        derivative_magnitude = math.tan(slope_rad)
+
+        # Восстанавливаем b
+        # |a * b| = derivative_magnitude
+        # b = derivative_magnitude / |a|
+        #
+        # НО! Нужно учесть знак.
+        # В большинстве случаев в вашей задаче:
+        # a < 0 (отрицательный)
+        # b > 0 (положительный)
+        # Поэтому a*b < 0, и slope = atan(|a*b|)
+        #
+        # Восстановление:
+        b_pred = derivative_magnitude / abs(a_pred)
+
+        # Обычно b положительный
+        return abs(b_pred)
 
     def _create_slope_scorer(self):
         """Нормализованный скорер для (f0, slope)"""
@@ -72,7 +97,7 @@ class LinearCombinedPredictor(BasePredictor):
             w_slope = 5.0
             return -(mae_f0_normalized + w_slope * mae_slope_normalized)
 
-        return make_scorer(normalized_scorer, greater_is_better=False)
+        return normalized_scorer
 
     def _create_coeff_scorer(self):
         """Скорер напрямую оптимизирует FE и SE"""
@@ -108,24 +133,10 @@ class LinearCombinedPredictor(BasePredictor):
 
             return -(np.mean(fe_errors) + np.mean(se_errors) * 100)
 
-        return make_scorer(fe_se_scorer, greater_is_better=False)
+        return fe_se_scorer
 
     def train(self, test_size=0.2, n_iter_slope=30, n_iter_coeff=30, cv_splits=5):
-        """
-        Обучение двухстадийной модели.
-
-        Параметры:
-        ----------
-        test_size : float
-            Размер тестовой выборки
-        n_iter_slope : int
-            Число итераций RandomizedSearch для slope predictor
-        n_iter_coeff : int
-            Число итераций RandomizedSearch для coeff predictor
-        cv_splits : int
-            Число фолдов для кросс-валидации
-        """
-        # Первый сплит: отделяем тестовую выборку
+        """Обучение двухстадийной модели"""
         X_temp, X_test, y_temp, y_test, metadata_temp, metadata_test = train_test_split(
             self.x, self.y, self.metadata, test_size=test_size, random_state=self.random_state
         )
@@ -135,11 +146,11 @@ class LinearCombinedPredictor(BasePredictor):
             print(f"LINEAR COMBINED MODEL: обучение на {len(X_temp)} samples, тест на {len(X_test)} samples")
             print(f"{'=' * 80}\n")
 
-        # ===== СТАДИЯ 1: Обучение slope predictor на ПОЛНОМ X_temp =====
+        # СТАДИЯ 1: Обучение slope predictor
         y_slope_full = self._prepare_slope_data(y_temp)
         self.slope_predictor = self._train_slope_predictor(X_temp, y_slope_full, n_iter_slope, cv_splits)
 
-        # ===== Получение out-of-fold предсказаний для X_temp =====
+        # Out-of-fold предсказания
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
         slope_oof = cross_val_predict(
             self.slope_predictor, X_temp, y_slope_full,
@@ -151,11 +162,11 @@ class LinearCombinedPredictor(BasePredictor):
             mae_slope = np.mean(np.abs(y_slope_full[:, 1] - slope_oof[:, 1]))
             print(f"Slope Predictor OOF MAE: f0={mae_f0:.4f} GHz, slope={mae_slope:.4f}°")
 
-        # ===== СТАДИЯ 2: Обучение coeff predictor на ПОЛНОМ X_temp + OOF slope =====
+        # СТАДИЯ 2: Обучение coeff predictor
         x_coeff_train, y_coeff_train = self._prepare_coeff_data(X_temp, slope_oof, y_temp)
         self.coeff_predictor = self._train_coeff_predictor(x_coeff_train, y_coeff_train, n_iter_coeff, cv_splits)
 
-        # ===== Финальная оценка на тестовой выборке =====
+        # Финальная оценка
         self._evaluate_combined_model(X_test, y_test, metadata_test)
 
         if self.verbose:

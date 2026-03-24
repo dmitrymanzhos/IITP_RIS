@@ -30,10 +30,9 @@ class LinearPredictor(BasePredictor):
 
         kf = KFold(n_splits=cv_splits, shuffle=True, random_state=self.random_state)
 
-        # Используем FE/SE скорер из базового класса
         search = RandomizedSearchCV(
             model, param_grid, n_iter=n_iter, cv=kf,
-            scoring='neg_mean_absolute_error',  # self._create_fe_se_scorer(),
+            scoring='neg_mean_absolute_error',
             verbose=self.verbose, n_jobs=-1, random_state=self.random_state
         )
 
@@ -42,7 +41,8 @@ class LinearPredictor(BasePredictor):
 
         if self.verbose:
             print(f"Лучшие параметры: {search.best_params_}")
-            print(f"Лучший score (-(FE + SE*100)): {search.best_score_:.4f}")
+            print(f"Лучший score: {search.best_score_:.4f}")
 
+        # Сначала вычисляем метрики на test
         y_pred_test = self.model.predict(X_test)
         self._evaluate_curves(X_test, y_test, y_pred_test, metadata_test)
